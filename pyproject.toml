@@ -1,0 +1,15 @@
+[project]
+name = "cryptanalysis"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

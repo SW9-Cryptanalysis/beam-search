@@ -1,6 +1,12 @@
+from fastapi import FastAPI
+from typing import Dict
+
 from cipher import Cipher
 
-if __name__ == '__main__':
+app = FastAPI()
+
+@app.get("/encrypt", response_model=Dict[str, str])
+def encrypt_text():
     alphabet = [chr(i + ord('A')) for i in range(26)]
 
     cipher = Cipher()
@@ -20,9 +26,14 @@ if __name__ == '__main__':
                 Nothing beside remains. Round the decay
                 Of that colossal wreck, boundless and bare,
                 The lone and level sands stretch far away."""
-    
+
     ciphertext = cipher.encrypt(plaintext)
 
-    print(ciphertext)
+    return {
+        "key": str(cipher),       # assuming Cipher.__str__ prints the key
+        "ciphertext": str(ciphertext)
+    }
 
-    print(cipher)
+@app.get("/")
+def root():
+    return {"message": "NLP app is running 🚀"}
