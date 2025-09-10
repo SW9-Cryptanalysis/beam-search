@@ -1,39 +1,27 @@
-from fastapi import FastAPI
-from typing import Dict
-
 from cipher import Cipher
 
-app = FastAPI()
+alphabet = [chr(i + ord('A')) for i in range(26)]
 
-@app.get("/encrypt", response_model=Dict[str, str])
-def encrypt_text():
-    alphabet = [chr(i + ord('A')) for i in range(26)]
+cipher = Cipher()
+cipher.generate_key(alphabet)
 
-    cipher = Cipher()
-    cipher.generate_key(alphabet)
+plaintext = """I MET A TRAVELLER from an antique land
+            Who said: Two vast and trunkless legs of stone
+            Stand in the desert. Near them on the sand,
+            Half sunk, a shattered visage lies, whose frown
+            And wrinkled lip and sneer of cold command
+            Tell that its sculptor well those passions read
+            Which yet survive, stamped on these lifeless things,
+            The hand that mocked them and the heart that fed.
+            And on the pedestal these words appear:
+            "My name is Ozymandias, King of Kings:
+            Look on my works, ye mighty, and despair!"
+            Nothing beside remains. Round the decay
+            Of that colossal wreck, boundless and bare,
+            The lone and level sands stretch far away."""
 
-    plaintext = """I MET A TRAVELLER from an antique land
-                Who said: Two vast and trunkless legs of stone
-                Stand in the desert. Near them on the sand,
-                Half sunk, a shattered visage lies, whose frown
-                And wrinkled lip and sneer of cold command
-                Tell that its sculptor well those passions read
-                Which yet survive, stamped on these lifeless things,
-                The hand that mocked them and the heart that fed.
-                And on the pedestal these words appear:
-                "My name is Ozymandias, King of Kings:
-                Look on my works, ye mighty, and despair!"
-                Nothing beside remains. Round the decay
-                Of that colossal wreck, boundless and bare,
-                The lone and level sands stretch far away."""
+ciphertext = cipher.encrypt(plaintext)
 
-    ciphertext = cipher.encrypt(plaintext)
-
-    return {
-        "key": str(cipher),       # assuming Cipher.__str__ prints the key
-        "ciphertext": str(ciphertext)
-    }
-
-@app.get("/")
-def root():
-    return {"message": "NLP app is running 🚀"}
+    
+print("Key:", cipher)
+print("Ciphertext:", ciphertext)
