@@ -4,7 +4,5 @@ services:
     container_name: cryptanalysis
     volumes:
       - .:/app   # Mount code for live reload (dev mode)
-    ports:
-      - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1

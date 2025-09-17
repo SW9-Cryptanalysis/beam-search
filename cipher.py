@@ -4,16 +4,10 @@ class Cipher:
     def __init__(self):
         self.key = None
 
-    def generate_key(self, alphabet, range_vals=(1,2), weights=None):
-        # Default range is only [1]
-        if range_vals == (1,2):
-            values = [1]
-        else:
-            # If a tuple or list is provided, convert to list of values
-            if isinstance(range_vals, tuple) or isinstance(range_vals, list):
-                values = list(range(*range_vals)) if len(range_vals) == 2 else list(range_vals)
-            else:
-                values = list(range_vals)
+    def generate_key(self, alphabet, min=1, max=1, weights=None):
+        if min > max:
+            raise ValueError("min cannot be greater than max")
+        values = list(range(min, max + 1))
         if weights is None:
             weights = [1] * len(values)
         key = {}
