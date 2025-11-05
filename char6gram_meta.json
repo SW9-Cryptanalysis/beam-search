@@ -1,5 +1,0 @@
-{
-  "model_path": "char6gram_model.pkl",
-  "n": 5,
-  "vocab": "$abcdefghijklmnopqrstuvwxyz"
-}
