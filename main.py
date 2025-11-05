@@ -1,27 +1,46 @@
-from cipher import Cipher
+from n_gram_model import load_model
+from beam_search import BeamSearchCipherSolver
+import json
 
-alphabet = [chr(i + ord('A')) for i in range(26)]
+print("Loading n-gram model...")
+model = load_model("char6gram_model.pkl")
 
-cipher = Cipher()
-cipher.generate_key(alphabet)
+# --- Load ciphertext ---
+with open("cipher-30.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
+cipher_text = data["ciphertext"]
 
-plaintext = """I MET A TRAVELLER from an antique land
-            Who said: Two vast and trunkless legs of stone
-            Stand in the desert. Near them on the sand,
-            Half sunk, a shattered visage lies, whose frown
-            And wrinkled lip and sneer of cold command
-            Tell that its sculptor well those passions read
-            Which yet survive, stamped on these lifeless things,
-            The hand that mocked them and the heart that fed.
-            And on the pedestal these words appear:
-            "My name is Ozymandias, King of Kings:
-            Look on my works, ye mighty, and despair!"
-            Nothing beside remains. Round the decay
-            Of that colossal wreck, boundless and bare,
-            The lone and level sands stretch far away."""
+# --- Load ciphertext ---
+with open("cipher-30.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
+plain_text = data["plaintext"]
 
-ciphertext = cipher.encrypt(plaintext)
+# --- Configure and run beam search ---
+BEAM_WIDTH = 1000  # wider beam for better search coverage
+HOMOPHONIC_NMAX = 21
 
-    
-print("Key:", cipher)
-print("Ciphertext:", ciphertext)
+solver = BeamSearchCipherSolver(
+    ciphertext=cipher_text,
+    model=model,
+    beam_size=BEAM_WIDTH,
+    nmax=HOMOPHONIC_NMAX
+)
+
+print(f"\nStarting beam search (beam={BEAM_WIDTH}, nmax={HOMOPHONIC_NMAX})...")
+best_mapping, best_score = solver.beam_search()
+
+# --- Print best mapping ---
+print("\nBest mapping found:")
+for c, p in sorted(best_mapping.items(), key=lambda x: int(x[0])):
+    print(f"{c} → {p}")
+
+# --- Show deciphered text ---
+plaintext_guess = solver.decrypt_best(best_mapping)
+print("\nDeciphered text (partial):")
+print(plaintext_guess[:500])
+
+total = len(plain_text)
+correct = sum(1 for p, r in zip(plaintext_guess, plain_text) if p == r)
+ser = 1 - (correct / total)
+
+print(f"\nSER:{ser}")
