@@ -6,18 +6,18 @@ print("Loading n-gram model...")
 model = load_model("char6gram_model.pkl")
 
 # --- Load ciphertext ---
-with open("cipher-30.json", "r", encoding="utf-8") as f:
+with open("mono-cipher-2.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 cipher_text = data["ciphertext"]
 
 # --- Load ciphertext ---
-with open("cipher-30.json", "r", encoding="utf-8") as f:
+with open("mono-cipher-2.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 plain_text = data["plaintext"]
 
 # --- Configure and run beam search ---
 BEAM_WIDTH = 1000  # wider beam for better search coverage
-HOMOPHONIC_NMAX = 21
+HOMOPHONIC_NMAX = 1
 
 solver = BeamSearchCipherSolver(
     ciphertext=cipher_text,
