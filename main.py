@@ -27,7 +27,7 @@ solver = BeamSearchCipherSolver(
 )
 
 print(f"\nStarting beam search (beam={BEAM_WIDTH}, nmax={HOMOPHONIC_NMAX})...")
-best_mapping, best_score = solver.beam_search()
+best_mapping, best_score = solver.beam_search(resume=True)
 
 # --- Print best mapping ---
 print("\nBest mapping found:")
