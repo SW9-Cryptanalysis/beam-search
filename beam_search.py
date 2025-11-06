@@ -1,63 +1,18 @@
 import heapq
-import math
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import math
 from n_gram_model import score_sequence
 
 
-# ---------- Shared helpers (used by workers and class) ----------
-
-def decrypt_with_mapping(cipher_tokens, mapping):
-    """Apply mapping to ciphertext tokens, replacing unknowns with '?'. """
-    return "".join(mapping.get(tok, "?") for tok in cipher_tokens)
-
-
-def can_extend_with(mapping, next_cipher, candidate_plain, nmax):
-    """Check homophonic constraint."""
-    used_by_plain = sum(1 for f, e in mapping.items() if e == candidate_plain)
-    return used_by_plain < nmax
-
-
-def score_candidate(mapping, next_cipher, cipher_tokens, model, Ve, nmax):
-    """Compute scores for all possible extensions of the mapping."""
-    n = model["_n"]
-    pad = "$" * (n - 1)
-
-    results = []
-    for e in Ve:
-        if can_extend_with(mapping, next_cipher, e, nmax):
-            new_mapping = dict(mapping)
-            new_mapping[next_cipher] = e
-
-            s = 0.0
-            s_str = decrypt_with_mapping(cipher_tokens, new_mapping)
-            s_str = pad + s_str.replace("?", "$") + "$"
-
-            # Optimistic heuristic: count only fixed n-grams
-            for i in range(n - 1, len(s_str)):
-                hist = s_str[i - (n - 1):i]
-                nxt = s_str[i]
-                if "$" not in hist + nxt:
-                    if hist in model and nxt in model[hist]:
-                        s += model[hist][nxt]
-                    else:
-                        s += math.log(1e-12)
-            results.append((new_mapping, s))
-    return results
-
-
-# ---------- Main class ----------
-
 class BeamSearchCipherSolver:
     def __init__(self, ciphertext, model, beam_size=10000,
-                 plaintext_alphabet=None, nmax=1, num_workers=None):
+                 plaintext_alphabet=None, nmax=1):
         """
-        ciphertext: string of numbers separated by spaces
-        model: loaded n-gram model
-        beam_size: beam width
+        ciphertext: a string of numbers separated by spaces
+        model: loaded n-gram model (from n_gram_model.load_model)
+        beam_size: number of hypotheses to keep per step (upper limit)
         plaintext_alphabet: allowed plaintext symbols
-        nmax: max cipher tokens per plaintext letter
-        num_workers: number of CPU processes (default = os.cpu_count())
+        nmax: max cipher tokens allowed per plaintext letter
         """
         # --- Parse ciphertext ---
         if isinstance(ciphertext, str):
@@ -65,44 +20,93 @@ class BeamSearchCipherSolver:
         else:
             self.cipher_tokens = list(map(str, ciphertext))
         if not self.cipher_tokens:
-            raise ValueError("Ciphertext appears empty or invalid!")
+            raise ValueError("Ciphertext appears empty or not tokenized correctly!")
 
         self.model = model
         self.beam_size = beam_size
         self.nmax = nmax
-        self.num_workers = num_workers
-        self.Vf = sorted(set(self.cipher_tokens))
+        self.Vf = sorted(set(self.cipher_tokens))   # cipher vocabulary (numbers as strings)
         self.Ve = plaintext_alphabet or list(model["_vocab"].replace("$", ""))
         self.unigram_counts = Counter(self.cipher_tokens)
         self.ext_order = [f for f, _ in self.unigram_counts.most_common()]
 
+    # ---------------- Utility functions ----------------
+
+    def decrypt_with_mapping(self, mapping):
+        """Apply current mapping (unknowns → '?')."""
+        return ''.join(mapping.get(tok, '?') for tok in self.cipher_tokens)
+
+    def score_partial(self, mapping):
+      """
+      Optimistic heuristic (Eq. 7 from Nuhn et al. 2013):
+      - Score only n-grams that are fully fixed (no '?').
+      - Unfixed parts contribute 0 to the total score.
+      """
+      s = self.decrypt_with_mapping(mapping)
+      s = s.replace('?', '$')  # keep consistent padding token
+
+      n = self.model["_n"]  # assuming stored in model
+      pad = '$' * (n - 1)
+      s = pad + s + '$'
+
+      total_logp = 0.0
+      for i in range(n - 1, len(s)):
+          hist = s[i - (n - 1):i]
+          nxt = s[i]
+          # only count fully fixed n-grams (no '$' inside hist+nxt except boundary padding)
+          if '$' not in hist + nxt:
+              if hist in self.model and nxt in self.model[hist]:
+                  total_logp += self.model[hist][nxt]
+              else:
+                  total_logp += math.log(1e-12)
+          else:
+              # optimistic: ignore unfinished parts
+              total_logp += 0.0
+
+      return total_logp
+    
+    # ---------------- Extension limits ----------------
+
+    def _can_extend_with(self, mapping, next_cipher, candidate_plain):
+        """Homophonic constraint: ≤ nmax cipher tokens per plaintext letter."""
+        used_by_plain = sum(1 for f, e in mapping.items() if e == candidate_plain)
+        return used_by_plain < self.nmax
+
+    def extend_mapping(self, mapping, next_cipher):
+        """Generate valid extensions for next cipher token."""
+        for e in self.Ve:
+            if self._can_extend_with(mapping, next_cipher, e):
+                new_mapping = dict(mapping)
+                new_mapping[next_cipher] = e
+                yield new_mapping
+
     # ---------------- Beam search ----------------
 
     def beam_search(self):
-        beam = [({}, 0.0)]
-        print(f"Starting beam search with {len(self.Vf)} cipher tokens, "
-              f"nmax={self.nmax}, beam={self.beam_size}, workers={self.num_workers or 'auto'}")
+        beam = [({}, 0.0)]  # list of (mapping, score)
+        print(f"Starting beam search with {len(self.Vf)} cipher tokens, nmax={self.nmax}, beam={self.beam_size}")
 
         for step, f in enumerate(self.ext_order, 1):
             new_beam = []
 
-            # ---- Parallel scoring ----
-            args_list = [(mapping, f, self.cipher_tokens, self.model, self.Ve, self.nmax)
-                         for mapping, _ in beam]
+            # Expand all current hypotheses
+            for mapping, base_score in beam:
+                for new_mapping in self.extend_mapping(mapping, f):
+                    s = self.score_partial(new_mapping)
+                    new_beam.append((new_mapping, s))
 
-            with ProcessPoolExecutor(max_workers=self.num_workers) as executor:
-                futures = [executor.submit(score_candidate, *args) for args in args_list]
-                for fut in as_completed(futures):
-                    for result in fut.result():
-                        new_beam.append(result)
-
-            # ---- Select best candidates ----
             if not new_beam:
                 print(f"⚠️ No extensions possible at step {step}.")
                 break
 
+            # Sort all candidates by score descending
             new_beam.sort(key=lambda x: x[1], reverse=True)
-            beam = new_beam[:self.beam_size]
+
+            # Limit to beam_size *only if* we have more than that
+            if len(new_beam) > self.beam_size:
+                beam = new_beam[:self.beam_size]
+            else:
+                beam = new_beam  # keep all if fewer than beam_size
 
             best_score = beam[0][1]
             avg_score = best_score / max(1, len(self.cipher_tokens))
@@ -113,4 +117,4 @@ class BeamSearchCipherSolver:
         return best_mapping, best_score
 
     def decrypt_best(self, best_mapping):
-        return decrypt_with_mapping(self.cipher_tokens, best_mapping)
+        return self.decrypt_with_mapping(best_mapping)
