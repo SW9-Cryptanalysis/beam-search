@@ -16,7 +16,7 @@ with open("cipher-30.json", "r", encoding="utf-8") as f:
 plain_text = data["plaintext"]
 
 # --- Configure and run beam search ---
-BEAM_WIDTH = 10000  # wider beam for better search coverage
+BEAM_WIDTH = 500000  # wider beam for better search coverage
 HOMOPHONIC_NMAX = 21
 
 solver = BeamSearchCipherSolver(
