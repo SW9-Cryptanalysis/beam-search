@@ -209,3 +209,6 @@ __marimo__/
 
 books/
 *.json
+
+checkpoints/
+*.pkl
