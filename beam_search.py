@@ -5,8 +5,93 @@ import json
 import pickle
 import math
 from collections import Counter
-from n_gram_model import score_sequence
+# NEW IMPORTS
+import multiprocessing
+from multiprocessing import Pool
 
+# =======================================================================
+# ==  TOP-LEVEL WORKER FUNCTIONS FOR MULTIPROCESSING                   ==
+# =======================================================================
+
+# We use a dictionary to hold variables for each worker process
+# This avoids passing the huge 'model' object around
+WORKER_VARS = {}
+
+def init_worker(model, cipher_tokens, ve, nmax, n_model):
+    """
+    Initializer for each pool worker.
+    Stores read-only data in a global-like dictionary.
+    """
+    WORKER_VARS['model'] = model
+    WORKER_VARS['cipher_tokens'] = cipher_tokens
+    WORKER_VARS['Ve'] = ve
+    WORKER_VARS['nmax'] = nmax
+    WORKER_VARS['n_model'] = n_model
+    # print(f"Worker {os.getpid()} initialized.") # For debugging
+
+def _score_partial_static(mapping):
+    """
+    A static, standalone version of score_partial for parallel workers.
+    It uses the data stored in WORKER_VARS.
+    """
+    # Access data from the worker's global-like store
+    model = WORKER_VARS['model']
+    cipher_tokens = WORKER_VARS['cipher_tokens']
+    n = WORKER_VARS['n_model']
+
+    # Standalone version of decrypt_with_mapping
+    s = ''.join(mapping.get(tok, '?') for tok in cipher_tokens)
+    s = s.replace('?', '$')  # placeholder for unfixed parts
+    pad = '$' * (n - 1)
+    s = pad + s + '$'
+
+    total_logp = 0.0
+    for i in range(n - 1, len(s)):
+        hist = s[i - (n - 1):i]
+        nxt = s[i]
+        if '$' not in hist + nxt:
+            if hist in model and nxt in model[hist]:
+                total_logp += model[hist][nxt]
+            else:
+                total_logp += math.log(1e-12) # OOV penalty
+        else:
+            total_logp += 0.0  # optimistic scoring
+    return total_logp
+
+def process_one_hypothesis(task):
+    """
+    This is the main function executed by a worker process.
+    It takes one (mapping, base_score) tuple and the next cipher token.
+    It returns a list of all scored extensions for that single hypothesis.
+    """
+    mapping, base_score = task['mapping_score']
+    f = task['f'] # The cipher token we are currently assigning
+
+    # Access worker data
+    Ve = WORKER_VARS['Ve']
+    nmax = WORKER_VARS['nmax']
+
+    results = []
+    
+    # Standalone version of _can_extend_with and extend_mapping
+    for e in Ve:
+        # Check _can_extend_with
+        used_by_plain = sum(1 for f_tok, e_plain in mapping.items() if e_plain == e)
+        
+        if used_by_plain < nmax:
+            # Create new mapping
+            new_mapping = dict(mapping)
+            new_mapping[f] = e
+            
+            # Score it
+            s = _score_partial_static(new_mapping)
+            results.append((new_mapping, s))
+            
+    return results
+
+# =======================================================================
+# ==  ORIGINAL CLASS (with modified beam_search)                       ==
+# =======================================================================
 
 class BeamSearchCipherSolver:
     def __init__(self, ciphertext, model, beam_size=500000,
@@ -129,7 +214,7 @@ class BeamSearchCipherSolver:
 
     # ---------------- Beam search ----------------
 
-    def beam_search(self, resume=True):
+    def beam_search(self, resume=True, num_workers=None):
         start_time = time.time()
         state = self._load_latest_checkpoint() if resume else None
 
@@ -140,33 +225,60 @@ class BeamSearchCipherSolver:
             beam = [({}, 0.0)]
             start_step = 1
 
+        if num_workers is None:
+            num_workers = os.cpu_count() or 1
+            print(f"Using default {num_workers} worker processes (all available cores).")
+        else:
+            print(f"Using {num_workers} worker processes.")
+
         print(f"Starting beam search with {len(self.Vf)} cipher tokens, nmax={self.nmax}, beam={self.beam_size}")
 
-        for step in range(start_step, len(self.ext_order) + 1):
-            f = self.ext_order[step - 1]
-            new_beam = []
+        # We pass the large, read-only data *once* to the initializer
+        init_args = (self.model, self.cipher_tokens, self.Ve, self.nmax, self.model["_n"])
+        
+        # Use 'spawn' context for better cross-platform compatibility
+        context = multiprocessing.get_context('spawn')
+        
+        # Use 'with' to automatically manage the pool's lifecycle
+        with context.Pool(processes=num_workers, initializer=init_worker, initargs=init_args) as pool:
 
-            for mapping, base_score in beam:
-                for new_mapping in self.extend_mapping(mapping, f):
-                    s = self.score_partial(new_mapping)
-                    new_beam.append((new_mapping, s))
+            for step in range(start_step, len(self.ext_order) + 1):
+                step_start_time = time.time()
+                f = self.ext_order[step - 1] # Current cipher token to map
+                
+                # 1. Create the list of tasks to distribute
+                # A task is one item from the old beam
+                tasks = [{'mapping_score': mapping_score, 'f': f} for mapping_score in beam]
 
-            if not new_beam:
-                print(f"⚠️ No extensions possible at step {step}.")
-                break
+                # 2. Run the parallel processing
+                # pool.map distributes the 'tasks' list to the 'process_one_hypothesis' function
+                # This blocks until all tasks are done.
+                # list_of_lists will contain one list of results for each task.
+                list_of_lists = pool.map(process_one_hypothesis, tasks)
 
-            new_beam.sort(key=lambda x: x[1], reverse=True)
-            beam = new_beam[:self.beam_size]
+                # 3. Flatten the list of lists into our single new_beam
+                new_beam = [item for sublist in list_of_lists for item in sublist]
 
-            best_score = beam[0][1]
-            avg_score = best_score / max(1, len(self.cipher_tokens))
-            print(f"Step {step}/{len(self.ext_order)} | Candidates={len(new_beam)} | "
-                  f"Beam={len(beam)} | Best={best_score:.2f} (avg {avg_score:.3f})")
+                if not new_beam:
+                    print(f"⚠️ No extensions possible at step {step}.")
+                    break
 
-            # Save checkpoint every hour
-            if time.time() - self.last_checkpoint_time >= self.checkpoint_interval:
-                self._save_checkpoint(step, beam)
-                self.last_checkpoint_time = time.time()
+                # 4. Sort and prune (this is unchanged)
+                new_beam.sort(key=lambda x: x[1], reverse=True)
+                beam = new_beam[:self.beam_size]
+                
+                step_duration = time.time() - step_start_time
+                best_score = beam[0][1]
+                avg_score = best_score / max(1, len(self.cipher_tokens))
+                
+                print(f"Step {step}/{len(self.ext_order)} | Candidates={len(new_beam)} | "
+                      f"Beam={len(beam)} | Best={best_score:.2f} (avg {avg_score:.3f}) | "
+                      f"Time={step_duration:.2f}s")
+
+                # Save checkpoint every hour (this is unchanged)
+                if time.time() - self.last_checkpoint_time >= self.checkpoint_interval:
+                    self._save_checkpoint(step, beam)
+                    self.last_checkpoint_time = time.time()
 
         best_mapping, best_score = beam[0]
         print("✅ Beam search complete.")
