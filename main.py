@@ -2,7 +2,7 @@ from n_gram_model import load_model
 from beam_search import BeamSearchCipherSolver
 import json
 import os
-import multiprocessing # <-- Import multiprocessing
+import multiprocessing
 
 # This function will run all your code
 def main():
@@ -14,10 +14,9 @@ def main():
         data = json.load(f)
     cipher_text = data["ciphertext"]
     plain_text = data["plaintext"]
-    # (I also fixed the duplicate file-opening you had here)
 
     # --- Configure and run beam search ---
-    BEAM_WIDTH = 500000  # wider beam for better search coverage
+    BEAM_WIDTH = 500000
     HOMOPHONIC_NMAX = 21
 
     solver = BeamSearchCipherSolver(
@@ -31,7 +30,7 @@ def main():
     
     best_mapping, best_score = solver.beam_search(
         resume=True
-        # num_workers=8 # You can still set this manually if you want
+        # num_workers=8
     )
 
     # --- Print best mapping ---
@@ -51,10 +50,7 @@ def main():
     print(f"\nSER:{ser}")
 
 
-# This 'if' block is the solution
 if __name__ == '__main__':
-    # Add this line for good practice on Windows
     multiprocessing.freeze_support() 
     
-    # Now, call your main function
     main()

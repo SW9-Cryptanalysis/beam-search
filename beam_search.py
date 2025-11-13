@@ -263,7 +263,7 @@ class BeamSearchCipherSolver:
                     print(f"⚠️ No extensions possible at step {step}.")
                     break
 
-                # 4. Sort and prune (this is unchanged)
+                # 4. Sort and prune
                 new_beam.sort(key=lambda x: x[1], reverse=True)
                 beam = new_beam[:self.beam_size]
                 
@@ -275,7 +275,7 @@ class BeamSearchCipherSolver:
                       f"Beam={len(beam)} | Best={best_score:.2f} (avg {avg_score:.3f}) | "
                       f"Time={step_duration:.2f}s")
 
-                # Save checkpoint every hour (this is unchanged)
+                # Save checkpoint every hour
                 if time.time() - self.last_checkpoint_time >= self.checkpoint_interval:
                     self._save_checkpoint(step, beam)
                     self.last_checkpoint_time = time.time()
